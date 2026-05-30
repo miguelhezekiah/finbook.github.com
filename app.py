@@ -19,6 +19,18 @@ import pandas as pd
 from datetime import date, datetime
 from supabase import create_client, Client
 
+ALLOWED_EMAIL = st.secrets["ALLOWED_EMAIL"]
+if "user" in st.session_state and st.session_state.user:
+    user_email = st.session_state.user.email
+    
+    # Check if the logged-in email matches your secret email
+    if user_email != ALLOWED_EMAIL:
+        st.error("🚫 Access Denied: This is a private ledger.")
+        
+        # Optional: Sign them out immediately via Supabase client if needed
+        # supabase.auth.sign_out() 
+        
+        st.stop() # Halts all further Streamlit execution for this session
 # ---------------------------------------------------------------------------
 # Page configuration
 # ---------------------------------------------------------------------------
