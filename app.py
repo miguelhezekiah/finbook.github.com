@@ -291,7 +291,7 @@ hr, [data-testid="stDivider"]{ border-color:var(--divider) !important; }
 
 
 def inject_theme() -> None:
-    st.markdown(THEME_CSS, unsafe_allow_html=True)
+    st.html(THEME_CSS)
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +592,7 @@ def render_kpis(df: pd.DataFrame, ccy_view: str) -> None:
         + kpi_card_html("Total expenses", "expense", exp, p_exp, ccy_view)
         + kpi_card_html("Net cash flow", "net", net, p_net, ccy_view)
     )
-    st.markdown(f'<div class="kpi-row">{cards}</div>', unsafe_allow_html=True)
+    st.html(f'<div class="kpi-row">{cards}</div>')
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +672,7 @@ def render_table(df: pd.DataFrame) -> None:
           <td class="cell-amt">{amount_cell_html(row)}</td>
         </tr>
         """)
-    st.markdown(head + "".join(body) + "</tbody></table>", unsafe_allow_html=True)
+    st.html(head + "".join(body) + "</tbody></table>")
 
 
 # ---------------------------------------------------------------------------
@@ -881,7 +881,7 @@ def render_insights(df: pd.DataFrame, ccy_view: str) -> None:
         + category_panel_html(df, disp)
         + savings_panel_html(df, disp)
     )
-    st.markdown(f'<div class="ins-row">{band}</div>', unsafe_allow_html=True)
+    st.html(f'<div class="ins-row">{band}</div>')
 
 
 # ---------------------------------------------------------------------------
@@ -996,7 +996,7 @@ def render_login() -> None:
     left, right = st.columns([1, 1], gap="large")
 
     with left:
-        st.markdown(
+        st.html(
             """
             <div class="brandmark" style="margin-bottom:28px">
               <svg width="26" height="26" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4" fill="#d4ff3a"/><path d="M8 12.5 11 15.5 16.5 9" stroke="#0a0c10" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -1007,8 +1007,7 @@ def render_login() -> None:
               A private financial journal for people who bill in multiple currencies and
               don't want a bank in the middle of their notes.
             </p>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
     with right:
@@ -1059,10 +1058,9 @@ def render_login() -> None:
         if st.session_state.auth_error:
             st.error(f"Authentication failed: {st.session_state.auth_error}")
 
-        st.markdown(
+        st.html(
             '<p style="margin-top:18px;font-size:11.5px;color:var(--muted)">🔒 Auth via Supabase. '
-            'Postgres RLS scopes every row to its owner.</p>',
-            unsafe_allow_html=True,
+            'Postgres RLS scopes every row to its owner.</p>'
         )
 
 
@@ -1071,14 +1069,13 @@ def render_login() -> None:
 # ---------------------------------------------------------------------------
 def render_sidebar_form(user_id: str) -> None:
     with st.sidebar:
-        st.markdown(
+        st.html(
             """
             <div class="brandmark" style="margin-bottom:6px">
               <svg width="22" height="22" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4" fill="#d4ff3a"/><path d="M8 12.5 11 15.5 16.5 9" stroke="#0a0c10" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
               <span style="font-size:14px;font-weight:600;color:var(--text)">Ledger</span>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
         st.header("➕ New transaction")
 
@@ -1183,7 +1180,7 @@ def render_dashboard() -> None:
         )
 
     if df.empty:
-        st.markdown(
+        st.html(
             '<div class="kpi-row">'
             + "".join(
                 f'<div class="kpi-card"><span class="kpi-label">{l}</span>'
@@ -1191,20 +1188,18 @@ def render_dashboard() -> None:
                 f'<span class="kpi-deltacap">Awaiting first entry</span></div>'
                 for l in ("Total income", "Total expenses", "Net cash flow")
             )
-            + "</div>",
-            unsafe_allow_html=True,
+            + "</div>"
         )
     else:
         render_kpis(df, ccy_view)
 
         # Insights band — charts that reconcile with the table below.
-        st.markdown(
+        st.html(
             '<div style="margin:18px 2px 10px;display:flex;align-items:baseline;'
             'justify-content:space-between">'
             '<span style="font-size:13px;font-weight:600;color:var(--text)">Insights</span>'
             '<span style="font-size:11.5px;color:var(--muted)">Current month · vs previous</span>'
-            '</div>',
-            unsafe_allow_html=True,
+            '</div>'
         )
         render_insights(df, ccy_view)
 
