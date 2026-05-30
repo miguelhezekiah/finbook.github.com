@@ -3,3 +3,9 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Ignore local Streamlit configurations completely
+.streamlit/
+
+# Optional: Ignore README if you want it entirely local
+README.md
