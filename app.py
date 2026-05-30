@@ -31,6 +31,39 @@ if "user" in st.session_state and st.session_state.user:
         # supabase.auth.sign_out() 
         
         st.stop() # Halts all further Streamlit execution for this session
+
+
+# Inject custom CSS to match Claude's original design specifications
+st.markdown(
+    """
+    <style>
+    /* Change the main container's background pattern if desired */
+    .stApp {
+        background-color: #0E1117;
+        background-image: radial-gradient(rgba(204, 255, 0, 0.05) 1px, transparent 0);
+        background-size: 24px 24px;
+    }
+    
+    /* Style Streamlit Metric Cards to look like high-fidelity dashboard modules */
+    div[data-testid="stMetric"] {
+        background-color: #1F2937;
+        border: 1px solid #374151;
+        border-top: 3px solid #CCFF00; /* Electric Lime top border */
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Customize headers and font pairings */
+    h1, h2, h3 {
+        font-family: 'Inter', sans-serif !important;
+        color: #F3F4F6 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # ---------------------------------------------------------------------------
 # Page configuration
 # ---------------------------------------------------------------------------
