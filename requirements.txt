@@ -1,0 +1,5 @@
+# Pinned-minimum requirements for the Streamlit financial-ledger app.
+# Tested against Python 3.11+.
+streamlit>=1.36,<2
+supabase>=2.5,<3
+pandas>=2.2,<3
