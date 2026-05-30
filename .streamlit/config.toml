@@ -1,0 +1,11 @@
+[theme]
+primaryColor = "#CCFF00"          # Electric Lime
+backgroundColor = "#0E1117"       # Dark Background
+secondaryBackgroundColor = "#1F2937" # Slightly lighter dark for cards/sidebar
+textColor = "#F3F4F6"             # Off-white text
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
