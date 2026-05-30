@@ -40,6 +40,7 @@ if "user" in st.session_state and st.session_state.user:
         
         st.stop() # Halts all further Streamlit execution for this session
 
+
 # ---------------------------------------------------------------------------
 # Page configuration
 # ---------------------------------------------------------------------------
@@ -265,13 +266,32 @@ hr, [data-testid="stDivider"]{ border-color:var(--divider) !important; }
 .brandmark{ display:inline-flex; align-items:center; gap:10px; }
 .login-quote{ font-family:var(--serif); font-size:40px; line-height:1.08; font-weight:400; color:var(--text); margin:0; }
 .login-quote em{ color:var(--accent); font-style:italic; }
+
+/* Insights band */
+.ins-row{ display:flex; gap:16px; align-items:stretch; margin:2px 0 2px; flex-wrap:wrap; }
+.panel{ background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:18px 20px 16px; display:flex; flex-direction:column; gap:14px; min-width:0; position:relative; overflow:hidden; }
+.panel-glow{ position:absolute; top:-40px; right:-40px; width:160px; height:160px;
+  background:radial-gradient(circle, var(--accent-soft), transparent 70%); pointer-events:none; }
+.panel-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.panel-title{ font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
+.legend{ display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--muted); }
+.legend i{ width:8px; height:8px; border-radius:2px; display:inline-block; }
+.statline{ display:flex; gap:24px; align-items:flex-end; }
+.stat-lbl{ font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+.stat-val{ font-family:var(--mono); font-size:14px; font-weight:600; }
+.cat-row{ display:flex; flex-direction:column; gap:5px; }
+.cat-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.cat-name{ display:inline-flex; align-items:center; gap:7px; min-width:0; font-size:12.5px; color:var(--text-soft); font-weight:500; }
+.cat-track{ height:6px; border-radius:3px; background:var(--inset); overflow:hidden; }
+.cat-fill{ height:100%; border-radius:3px; opacity:.85; }
+.ring-num{ font-family:var(--serif); font-size:34px; color:var(--text); line-height:1; }
 </style>
 """
 
 
 def inject_theme() -> None:
-    #st.markdown(THEME_CSS, unsafe_allow_html=True)
-    st.html(THEME_CSS)
+    st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +378,30 @@ def sign_out() -> None:
 # ---------------------------------------------------------------------------
 def insert_transaction(payload: dict) -> dict:
     response = supabase.table("transactions").insert(payload).execute()
+    return response.data
+
+
+def update_transaction(txn_id: int, user_id: str, payload: dict) -> dict:
+    """Update one row. Scoped to (id, user_id) so a user can never edit a row
+    that isn't theirs — RLS enforces this on the server too."""
+    response = (
+        supabase.table("transactions")
+        .update(payload)
+        .eq("id", txn_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    return response.data
+
+
+def delete_transaction(txn_id: int, user_id: str) -> dict:
+    response = (
+        supabase.table("transactions")
+        .delete()
+        .eq("id", txn_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
     return response.data
 
 
@@ -548,8 +592,7 @@ def render_kpis(df: pd.DataFrame, ccy_view: str) -> None:
         + kpi_card_html("Total expenses", "expense", exp, p_exp, ccy_view)
         + kpi_card_html("Net cash flow", "net", net, p_net, ccy_view)
     )
-    #st.markdown(f'<div class="kpi-row">{cards}</div>', unsafe_allow_html=True)
-    st.html(f'<div class="kpi-row">{cards}</div>')
+    st.markdown(f'<div class="kpi-row">{cards}</div>', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -629,8 +672,319 @@ def render_table(df: pd.DataFrame) -> None:
           <td class="cell-amt">{amount_cell_html(row)}</td>
         </tr>
         """)
-    #st.markdown(head + "".join(body) + "</tbody></table>", unsafe_allow_html=True)
-    st.html(head + "".join(body) + "</tbody></table>")
+    st.markdown(head + "".join(body) + "</tbody></table>", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Insights band — cash-flow chart, category breakdown, savings ring.
+# Rendered as custom SVG/HTML so it matches the design mockup 1:1. All three
+# panels are computed from the same dataframe in a single display currency
+# (USD by default; IDR when the KPI view is set to IDR).
+# ---------------------------------------------------------------------------
+def to_disp(amount: float, src_ccy: str, disp_ccy: str) -> float:
+    if src_ccy == disp_ccy:
+        return amount
+    if disp_ccy == "USD":
+        return usd_equiv(amount, src_ccy)
+    return amount if src_ccy == "IDR" else amount * FX_IDR_PER_USD
+
+
+def axis_label(v: float, ccy: str) -> str:
+    a = abs(v)
+    if ccy == "IDR":
+        if a >= 1e9:
+            return f"{v/1e9:.1f}B"
+        if a >= 1e6:
+            return f"{v/1e6:.0f}M"
+        if a >= 1e3:
+            return f"{v/1e3:.0f}k"
+        return f"{v:.0f}"
+    if a >= 1e6:
+        return f"{v/1e6:.1f}M"
+    if a >= 1e3:
+        return f"{v/1e3:.0f}k"
+    return f"{v:.0f}"
+
+
+def cashflow_panel_html(df: pd.DataFrame, disp: str) -> str:
+    import math
+    sym = "Rp" if disp == "IDR" else "$"
+
+    # Bucket by date (ascending) → income / expense / cumulative balance.
+    buckets = {}
+    for _, r in df.iterrows():
+        v = to_disp(r["amount"], r["currency"], disp)
+        key = str(r["date"])
+        b = buckets.setdefault(key, {"income": 0.0, "expense": 0.0})
+        b["income" if r["type"] == "Income" else "expense"] += v
+    days = [dict(date=k, **v) for k, v in sorted(buckets.items())]
+    run = 0.0
+    for d in days:
+        run += d["income"] - d["expense"]
+        d["balance"] = run
+
+    if not days:
+        return ""
+
+    W, H, padX, mid = 560, 150, 8, 16
+    top_h = (H - mid) * 0.56
+    bot_h = (H - mid) * 0.44
+    base_y = top_h + mid / 2
+    max_bar = max([1.0] + [max(d["income"], d["expense"]) for d in days])
+    n = len(days)
+    slot = (W - padX * 2) / n
+    bar_w = min(18.0, slot * 0.46)
+
+    bal_vals = [d["balance"] for d in days]
+    bal_min = min([0.0] + bal_vals)
+    bal_max = max([1.0] + bal_vals)
+
+    def cx(i):
+        return padX + slot * i + slot / 2
+
+    def bal_y(v):
+        tn = (v - bal_min) / ((bal_max - bal_min) or 1)
+        return H - tn * (H - 12) - 6
+
+    bars = []
+    for i, d in enumerate(days):
+        x = cx(i) - bar_w / 2
+        if d["income"] > 0:
+            ih = d["income"] / max_bar * top_h
+            bars.append(f'<rect x="{x:.1f}" y="{base_y - ih:.1f}" width="{bar_w:.1f}" height="{ih:.1f}" rx="2.5" fill="var(--income)" opacity="0.9"/>')
+        if d["expense"] > 0:
+            eh = d["expense"] / max_bar * bot_h
+            bars.append(f'<rect x="{x:.1f}" y="{base_y:.1f}" width="{bar_w:.1f}" height="{eh:.1f}" rx="2.5" fill="var(--expense)" opacity="0.85"/>')
+
+    line_pts = " ".join(f"{cx(i):.1f},{bal_y(d['balance']):.1f}" for i, d in enumerate(days))
+    dots = "".join(
+        f'<circle cx="{cx(i):.1f}" cy="{bal_y(d["balance"]):.1f}" r="2.4" fill="var(--bg)" stroke="var(--accent)" stroke-width="1.5"/>'
+        for i, d in enumerate(days)
+    )
+    poly = f'<polygon points="{cx(0):.1f},{H} {line_pts} {cx(n-1):.1f},{H}" fill="url(#balfill)"/>'
+
+    total_in = sum(d["income"] for d in days)
+    total_out = sum(d["expense"] for d in days)
+
+    legend = "".join(
+        f'<span class="legend"><i style="background:{c}"></i>{l}</span>'
+        for l, c in [("Income", "var(--income)"), ("Expense", "var(--expense)"), ("Balance", "var(--accent)")]
+    )
+
+    fx_note = "" if disp == "IDR" else " · FX 16,400"
+
+    return f"""
+    <div class="panel" style="flex:2 1 0">
+      <div class="panel-glow"></div>
+      <div class="panel-head">
+        <span class="panel-title">Cash flow · May</span>
+        <span style="display:flex;gap:14px;align-items:center">{legend}</span>
+      </div>
+      <svg viewBox="0 0 {W} {H}" width="100%" height="{H}" preserveAspectRatio="none" style="display:block;position:relative">
+        <defs><linearGradient id="balfill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+        </linearGradient></defs>
+        <line x1="{padX}" y1="{base_y:.1f}" x2="{W-padX}" y2="{base_y:.1f}" stroke="var(--border)" stroke-width="1"/>
+        {''.join(bars)}
+        {poly}
+        <polyline points="{line_pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        {dots}
+      </svg>
+      <div class="statline">
+        <div><div class="stat-lbl">In</div><div class="stat-val" style="color:var(--income)">{sym}{axis_label(total_in, disp)}</div></div>
+        <div><div class="stat-lbl">Out</div><div class="stat-val" style="color:var(--expense)">{sym}{axis_label(total_out, disp)}</div></div>
+        <div><div class="stat-lbl">Net</div><div class="stat-val" style="color:var(--accent)">{sym}{axis_label(total_in-total_out, disp)}</div></div>
+        <div style="flex:1"></div>
+        <span style="align-self:flex-end;font-size:10.5px;color:var(--dim)" class="lg-mono">≈ {disp}{fx_note}</span>
+      </div>
+    </div>
+    """
+
+
+def category_panel_html(df: pd.DataFrame, disp: str) -> str:
+    sums = {}
+    for _, r in df[df["type"] == "Expense"].iterrows():
+        sums[r["category"]] = sums.get(r["category"], 0.0) + to_disp(r["amount"], r["currency"], disp)
+    arr = sorted(sums.items(), key=lambda kv: kv[1], reverse=True)
+    total = sum(v for _, v in arr) or 1.0
+    top = arr[:6]
+    mx = top[0][1] if top else 1.0
+
+    rows = []
+    for cat, v in top:
+        pct = v / total * 100
+        w = v / mx * 100
+        rows.append(f"""
+        <div class="cat-row">
+          <div class="cat-head">
+            <span class="cat-name"><span style="color:{category_color(cat)};font-size:12px">{category_glyph(cat)}</span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{html.escape(str(cat))}</span></span>
+            <span class="lg-mono" style="font-size:11.5px;color:var(--muted);flex-shrink:0">{pct:.0f}%</span>
+          </div>
+          <div class="cat-track"><div class="cat-fill" style="width:{w:.0f}%;background:{category_color(cat)}"></div></div>
+        </div>
+        """)
+
+    return f"""
+    <div class="panel" style="flex:1 1 0">
+      <div class="panel-head">
+        <span class="panel-title">Where it goes</span>
+        <span class="lg-mono" style="font-size:11px;color:var(--muted)">{len(top)} categories</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:11px">{''.join(rows)}</div>
+    </div>
+    """
+
+
+def savings_panel_html(df: pd.DataFrame, disp: str) -> str:
+    import math
+    inc = sum(to_disp(r["amount"], r["currency"], disp) for _, r in df[df["type"] == "Income"].iterrows())
+    exp = sum(to_disp(r["amount"], r["currency"], disp) for _, r in df[df["type"] == "Expense"].iterrows())
+    rate = (inc - exp) / inc if inc > 0 else 0.0
+    saved = inc - exp
+    sym = "Rp" if disp == "IDR" else "$"
+
+    R = 46
+    C = 2 * math.pi * R
+    pct = max(0.0, min(1.0, rate))
+    dash = C * pct
+
+    return f"""
+    <div class="panel" style="flex:0 0 200px">
+      <div class="panel-head"><span class="panel-title">Savings rate</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:4px 0 2px">
+        <div style="position:relative;width:120px;height:120px">
+          <svg width="120" height="120" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="{R}" fill="none" stroke="var(--inset)" stroke-width="10"/>
+            <circle cx="60" cy="60" r="{R}" fill="none" stroke="var(--accent)" stroke-width="10"
+              stroke-linecap="round" stroke-dasharray="{dash:.1f} {C:.1f}" transform="rotate(-90 60 60)"/>
+          </svg>
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+            <span class="ring-num">{round(rate*100)}%</span>
+            <span style="font-size:10.5px;color:var(--muted);margin-top:2px">of income kept</span>
+          </div>
+        </div>
+        <div style="text-align:center">
+          <div class="lg-mono" style="font-size:14px;font-weight:600;color:var(--accent)">{sym}{axis_label(saved, disp)}</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px">net saved this month</div>
+        </div>
+      </div>
+    </div>
+    """
+
+
+def render_insights(df: pd.DataFrame, ccy_view: str) -> None:
+    disp = "IDR" if ccy_view == "IDR" else "USD"
+    band = (
+        cashflow_panel_html(df, disp)
+        + category_panel_html(df, disp)
+        + savings_panel_html(df, disp)
+    )
+    st.markdown(f'<div class="ins-row">{band}</div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Edit / delete an existing transaction
+# ---------------------------------------------------------------------------
+def render_edit_section(df: pd.DataFrame, user_id: str) -> None:
+    """Pick a transaction, pre-fill a form with its current values, then save
+    changes or delete it. Selecting a different row re-initialises every field
+    because the widget keys are namespaced by the selected id."""
+    with st.expander("✏️  Edit or delete a transaction"):
+        # Build a readable label per row for the picker.
+        def label_for(r) -> str:
+            d = r["date"]
+            d = d.isoformat() if hasattr(d, "isoformat") else str(d)
+            return f'#{int(r["id"])} · {d} · {r["type"]} · {fmt_money(r["amount"], r["currency"])} · {r["vendor_location"] or r["category"]}'
+
+        id_to_label = {int(r["id"]): label_for(r) for _, r in df.iterrows()}
+        sel_id = st.selectbox(
+            "Transaction",
+            options=list(id_to_label.keys()),
+            format_func=lambda i: id_to_label[i],
+        )
+        row = df[df["id"] == sel_id].iloc[0]
+
+        # has_discount toggle lives outside the form so the discount field can
+        # appear/disappear immediately. Keyed per id → resets on re-selection.
+        edit_has_discount = st.checkbox(
+            "Discount applied",
+            value=bool(row.get("has_discount")),
+            key=f"edit_disc_{sel_id}",
+        )
+
+        with st.form(f"edit_form_{sel_id}"):
+            e_date = st.date_input("Date", value=row["date"])
+            e_type = st.selectbox(
+                "Direction", options=["Income", "Expense"],
+                index=["Income", "Expense"].index(row["type"]),
+            )
+            c_amt, c_ccy = st.columns([3, 1])
+            with c_amt:
+                e_amount = st.number_input(
+                    "Amount paid", min_value=0.0, value=float(row["amount"]),
+                    step=1000.0, format="%.2f",
+                )
+            with c_ccy:
+                e_currency = st.selectbox(
+                    "Ccy", options=["IDR", "USD"],
+                    index=["IDR", "USD"].index(row["currency"]),
+                )
+
+            e_discount = 0.0
+            if edit_has_discount:
+                e_discount = st.number_input(
+                    "Discount amount", min_value=0.0,
+                    value=float(row.get("discount_amount") or 0.0),
+                    step=1000.0, format="%.2f",
+                )
+                st.caption(f"Normal price: **{fmt_money(e_amount + e_discount, e_currency)}**")
+            e_original = e_amount + e_discount
+
+            e_category = st.selectbox(
+                "Category", options=CATEGORIES,
+                index=CATEGORIES.index(row["category"]) if row["category"] in CATEGORIES else len(CATEGORIES) - 1,
+            )
+            e_vendor = st.text_input("Vendor / location", value=row.get("vendor_location") or "")
+            e_sub = st.checkbox("Recurring subscription", value=bool(row.get("is_subscription")))
+
+            col_save, col_del = st.columns([3, 1])
+            with col_save:
+                save = st.form_submit_button("Save changes", use_container_width=True, type="primary")
+            with col_del:
+                delete = st.form_submit_button("Delete", use_container_width=True)
+
+            if save:
+                if e_amount <= 0:
+                    st.error("Amount must be greater than zero.")
+                    return
+                payload = {
+                    "date": e_date.isoformat(),
+                    "type": e_type,
+                    "amount": float(e_amount),
+                    "currency": e_currency,
+                    "category": e_category,
+                    "vendor_location": e_vendor.strip(),
+                    "has_discount": bool(edit_has_discount),
+                    "discount_amount": float(e_discount),
+                    "original_amount": float(e_original),
+                    "is_subscription": bool(e_sub),
+                }
+                try:
+                    update_transaction(int(sel_id), user_id, payload)
+                    st.success("Transaction updated.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Failed to update: {exc}")
+
+            if delete:
+                try:
+                    delete_transaction(int(sel_id), user_id)
+                    st.success("Transaction deleted.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Failed to delete: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +996,7 @@ def render_login() -> None:
     left, right = st.columns([1, 1], gap="large")
 
     with left:
-        st.html(
+        st.markdown(
             """
             <div class="brandmark" style="margin-bottom:28px">
               <svg width="26" height="26" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4" fill="#d4ff3a"/><path d="M8 12.5 11 15.5 16.5 9" stroke="#0a0c10" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -653,7 +1007,8 @@ def render_login() -> None:
               A private financial journal for people who bill in multiple currencies and
               don't want a bank in the middle of their notes.
             </p>
-            """
+            """,
+            unsafe_allow_html=True,
         )
 
     with right:
@@ -704,9 +1059,10 @@ def render_login() -> None:
         if st.session_state.auth_error:
             st.error(f"Authentication failed: {st.session_state.auth_error}")
 
-        st.html(
+        st.markdown(
             '<p style="margin-top:18px;font-size:11.5px;color:var(--muted)">🔒 Auth via Supabase. '
-            'Postgres RLS scopes every row to its owner.</p>'
+            'Postgres RLS scopes every row to its owner.</p>',
+            unsafe_allow_html=True,
         )
 
 
@@ -715,13 +1071,14 @@ def render_login() -> None:
 # ---------------------------------------------------------------------------
 def render_sidebar_form(user_id: str) -> None:
     with st.sidebar:
-        st.html(
+        st.markdown(
             """
             <div class="brandmark" style="margin-bottom:6px">
               <svg width="22" height="22" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4" fill="#d4ff3a"/><path d="M8 12.5 11 15.5 16.5 9" stroke="#0a0c10" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
               <span style="font-size:14px;font-weight:600;color:var(--text)">Ledger</span>
             </div>
-            """
+            """,
+            unsafe_allow_html=True,
         )
         st.header("➕ New transaction")
 
@@ -826,7 +1183,7 @@ def render_dashboard() -> None:
         )
 
     if df.empty:
-        st.html(
+        st.markdown(
             '<div class="kpi-row">'
             + "".join(
                 f'<div class="kpi-card"><span class="kpi-label">{l}</span>'
@@ -834,10 +1191,22 @@ def render_dashboard() -> None:
                 f'<span class="kpi-deltacap">Awaiting first entry</span></div>'
                 for l in ("Total income", "Total expenses", "Net cash flow")
             )
-            + "</div>"
+            + "</div>",
+            unsafe_allow_html=True,
         )
     else:
         render_kpis(df, ccy_view)
+
+        # Insights band — charts that reconcile with the table below.
+        st.markdown(
+            '<div style="margin:18px 2px 10px;display:flex;align-items:baseline;'
+            'justify-content:space-between">'
+            '<span style="font-size:13px;font-weight:600;color:var(--text)">Insights</span>'
+            '<span style="font-size:11.5px;color:var(--muted)">Current month · vs previous</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        render_insights(df, ccy_view)
 
     st.divider()
 
@@ -855,6 +1224,9 @@ def render_dashboard() -> None:
             file_name=f"transactions-{datetime.utcnow().strftime('%Y%m%d')}.csv",
             mime="text/csv",
         )
+
+        # Inline edit / delete
+        render_edit_section(df, user_id)
 
 
 # ---------------------------------------------------------------------------
