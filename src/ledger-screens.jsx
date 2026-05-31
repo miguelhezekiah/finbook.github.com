@@ -442,11 +442,15 @@ function DashboardScreen({ t, dark, ccyMode, density }) {
             </>
           } />
 
-        <div style={{ padding: '24px 32px 12px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16, padding: '24px 32px 28px' }}>
           <KPIRow t={t} dark={dark} rows={SAMPLE_TRANSACTIONS} prev={PREVIOUS_PERIOD} ccyMode={ccyMode} />
-        </div>
-
-        <div style={{ padding: '12px 32px 24px', flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '4px 2px 12px' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: t.text }}>Insights</span>
+              <span style={{ fontSize: 11.5, color: t.muted }}>May 2026 · vs April</span>
+            </div>
+            <InsightsBand t={t} dark={dark} rows={SAMPLE_TRANSACTIONS} ccyMode={ccyMode} />
+          </div>
           <TransactionTable t={t} dark={dark} rows={SAMPLE_TRANSACTIONS} density={density} />
         </div>
       </main>

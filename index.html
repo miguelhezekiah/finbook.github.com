@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Financial Ledger</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #0a0c10; }
+    body { font-family: 'Geist', system-ui, sans-serif; }
+    #root { min-height: 100vh; }
+    /* First-paint splash so there's no white flash before React mounts */
+    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+            background: #0a0c10; color: #878c97; font: 14px system-ui; z-index: -1; }
+  </style>
+
+  <!-- React + Babel (pinned + integrity) -->
+  <script type='text/javascript' nonce='I9Pwgy5d7/lle123xxGlJA==' src='https://claude.ai/FMMymSohPXOelkgmorDiklrgYKuWTSPE2pu0Uv8nBkwp7DiQYM5OYH61ZuaOk8dW5eCPud-YQD1R1IA8xcksuH8jM-jahstNMY931v5-5MxEUn6Qhp5E9C9ycEzfJ6zSaHedpawU3l00tkCEOnVKir0De9pSYJF4uqjfhfK4gt_bXCCkQobrRi3-EBmV_YjitXHeJpYiZ4VCLCAvNu37KULhe-OE9xJfJLALY3BJm06dLVbWDSHAlwlwt6WN2JRPCh3dlC2Tue8ToFjWXucAQQsq5ZYdMaIyA5w1vAUNHj5HfjENm4Ok5ZLKqqGUEZ38yB2gUOOdwBwS4kzRrdi-3IDyZdQjQXfwtB3PpvjEC4xevNLg3XrAclHcAcYgBLYr4Y3O06seryc8h7Xs5c35SH-Lz9Tzn8cZQR258OZXNAaJQK-x8LCLoBPAlMQUB1XNyr-iOV0HMj_Pm0x6Tw7SOARysWSVE7SNLAxxifOd70SkEg1k4RhuDh7xxBbv5W8FJkx3G-Wy6XVAYHO_zy35g7FsKs4WBoLPr5ovmpqPY-yzepc'></script><script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <!-- Supabase JS (auth + data) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+
+  <!-- Your Supabase project settings (safe to ship; protected by RLS) -->
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="boot">Loading your ledger…</div>
+  <div id="root"></div>
+
+  <!-- Presentational component library (shared with the design mockup) -->
+  <script type="text/babel" src="src/ledger-tokens.jsx"></script>
+  <script type="text/babel" src="src/ledger-ui.jsx"></script>
+  <script type="text/babel" src="src/ledger-kpi.jsx"></script>
+  <script type="text/babel" src="src/ledger-table.jsx"></script>
+  <script type="text/babel" src="src/ledger-charts.jsx"></script>
+
+  <!-- The real, wired application -->
+  <script type="text/babel" src="src/ledger-app.jsx"></script>
+</body>
+</html>

@@ -69,13 +69,13 @@ function FlagRow({ row, t }) {
   );
 }
 
-function TransactionRow({ row, t, dark, density }) {
+function TransactionRow({ row, t, dark, density, onClick }) {
   const isIncome = row.type === 'Income';
   const hint = isIncome ? t.income : t.expense;
   const pad = density === 'compact' ? '8px 18px' : density === 'comfy' ? '18px 18px' : '13px 18px';
 
   return (
-    <div style={{
+    <div onClick={onClick} style={{
       display: 'grid',
       gridTemplateColumns: '100px 90px 1.6fr 1.2fr 70px 1fr',
       alignItems: 'center', gap: 14,
@@ -118,8 +118,10 @@ function TransactionRow({ row, t, dark, density }) {
   );
 }
 
-function TransactionTable({ t, dark, rows, density = 'regular', onRowClick }) {
+function TransactionTable({ t, dark, rows, density = 'regular', onRowClick, query = '', onQueryChange, onExport, total }) {
   const padHeader = '12px 18px';
+  const shown = rows.length;
+  const grand = total == null ? shown : total;
   return (
     <div style={{
       background: t.surface, border: `1px solid ${t.border}`,
@@ -135,13 +137,14 @@ function TransactionTable({ t, dark, rows, density = 'regular', onRowClick }) {
           fontSize: 11, fontWeight: 500, color: t.muted,
           padding: '2px 7px', borderRadius: 999,
           background: t.chipBg, border: `0.5px solid ${t.chipLine}`,
-        }}>{rows.length}</span>
+        }}>{shown}</span>
         <div style={{ flex: 1 }} />
         <div style={{ width: 220 }}>
-          <TextInput t={t} placeholder="Search vendor, category…" prefix={<Icon name="search" size={13} color={t.muted} />} />
+          <TextInput t={t} value={query} onChange={onQueryChange}
+            placeholder="Search vendor, category…"
+            prefix={<Icon name="search" size={13} color={t.muted} />} />
         </div>
-        <Button t={t} kind="secondary" size="sm" icon="filter">Filter</Button>
-        <Button t={t} kind="secondary" size="sm" icon="download">Export CSV</Button>
+        <Button t={t} kind="secondary" size="sm" icon="download" onClick={onExport}>Export CSV</Button>
       </div>
 
       {/* Column header */}
@@ -164,8 +167,13 @@ function TransactionTable({ t, dark, rows, density = 'regular', onRowClick }) {
 
       {/* Rows */}
       <div>
-        {rows.map(row => (
-          <TransactionRow key={row.id} row={row} t={t} dark={dark} density={density} onClick={() => onRowClick && onRowClick(row)} />
+        {rows.length === 0 ? (
+          <div style={{ padding: '32px 18px', textAlign: 'center', color: t.muted, fontSize: 13 }}>
+            No transactions match your search.
+          </div>
+        ) : rows.map(row => (
+          <TransactionRow key={row.id} row={row} t={t} dark={dark} density={density}
+            onClick={() => onRowClick && onRowClick(row)} />
         ))}
       </div>
 
@@ -175,8 +183,10 @@ function TransactionTable({ t, dark, rows, density = 'regular', onRowClick }) {
         padding: '12px 18px', background: t.inset, borderTop: `1px solid ${t.divider}`,
         fontSize: 11.5, color: t.muted,
       }}>
-        <span>Showing {rows.length} of {rows.length} transactions</span>
-        <span className="ledger-mono">Updated just now</span>
+        <span>Showing {shown} of {grand} transactions</span>
+        <span className="ledger-mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="info" size={11} color={t.muted} /> Click a row to edit
+        </span>
       </div>
     </div>
   );
