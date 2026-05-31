@@ -14,6 +14,6 @@
 //   Project Settings → API → anon  public  → SUPABASE_KEY
 // ───────────────────────────────────────────────────────────────────────────
 window.LEDGER_CONFIG = {
-  SUPABASE_URL: "https://YOUR-PROJECT-REF.supabase.co",
-  SUPABASE_KEY: "YOUR-ANON-PUBLIC-KEY",
+  SUPABASE_URL: "https://eiuwndqehkidlnympjcb.supabase.co",
+  SUPABASE_KEY: "sb_publishable_vwRJVGD11JqAd86fzHtuZw_oHdMNamN",
 };
