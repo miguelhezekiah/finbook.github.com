@@ -17,6 +17,12 @@ const CONFIGURED =
   !CFG.SUPABASE_KEY.includes('YOUR-ANON');
 const db = CONFIGURED ? supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY) : null;
 
+// A throwaway local identity used only in demo mode (no Supabase). Lets the
+// whole app — wallets, top-ups, filtering — run against localStorage.
+const DEMO_SESSION = {
+  user: { id: 'demo-user', email: 'you@demo.ledger', user_metadata: { display_name: 'Demo User' } },
+};
+
 const CATEGORIES = [
   'Salary', 'Freelance', 'Investment', 'Food & Beverage', 'Transport',
   'Housing', 'Utilities', 'Entertainment', 'Health', 'Shopping', 'Travel',
@@ -44,7 +50,7 @@ const monthLabel = (key) => {
 
 function toCSV(rows) {
   if (!rows.length) return '';
-  const cols = ['id', 'date', 'type', 'amount', 'currency', 'category',
+  const cols = ['id', 'date', 'type', 'amount', 'currency', 'category', 'wallet_id',
     'vendor_location', 'has_discount', 'discount_amount', 'original_amount', 'is_subscription'];
   const esc = (v) => {
     const s = v == null ? '' : String(v);
@@ -75,10 +81,13 @@ function Banner({ t, kind, children, onClose }) {
 }
 
 // ─── Entry form (controlled) — used for both Add and Edit ──────────────────
-function EntryForm({ t, dark, initial, onSubmit, onDelete, busy, submitLabel = 'Save transaction' }) {
+function EntryForm({ t, dark, initial, wallet, onSubmit, onDelete, busy, submitLabel = 'Save transaction' }) {
   const today = new Date().toISOString().slice(0, 10);
+  // wallet === undefined → leave as-is (edit); wallet === null → main; id → wallet-scoped.
+  const effectiveWallet = wallet !== undefined ? wallet : (initial?.wallet_id ?? null);
+  const lockIDR = !!effectiveWallet;
   const [type, setType] = useState(initial?.type || 'Expense');
-  const [currency, setCurrency] = useState(initial?.currency || 'IDR');
+  const [currency, setCurrency] = useState(lockIDR ? 'IDR' : (initial?.currency || 'IDR'));
   const [amount, setAmount] = useState(initial ? String(initial.amount) : '');
   const [category, setCategory] = useState(initial?.category || 'Food & Beverage');
   const [vendor, setVendor] = useState(initial?.vendor_location || '');
@@ -102,6 +111,7 @@ function EntryForm({ t, dark, initial, onSubmit, onDelete, busy, submitLabel = '
       amount: paidNum,
       currency,
       category,
+      wallet_id: effectiveWallet,
       vendor_location: vendor.trim(),
       has_discount: hasDiscount,
       discount_amount: hasDiscount ? discNum : 0,
@@ -127,7 +137,11 @@ function EntryForm({ t, dark, initial, onSubmit, onDelete, busy, submitLabel = '
         </div>
         <div style={{ width: 96 }}>
           <FieldLabel t={t}>Ccy</FieldLabel>
-          <Select t={t} value={currency} onChange={setCurrency} options={['IDR', 'USD']} />
+          {lockIDR ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 40, borderRadius: 8, background: t.inset, border: `1px solid ${t.border}`, fontSize: 13, color: t.textSoft, fontWeight: 500 }}>Rp · IDR</div>
+          ) : (
+            <Select t={t} value={currency} onChange={setCurrency} options={['IDR', 'USD']} />
+          )}
         </div>
       </div>
 
@@ -199,7 +213,7 @@ function AuthScreen({ t, dark, onAuthed }) {
 
   const submit = async () => {
     setErr(null); setNotice(null);
-    if (!CONFIGURED) { setErr('Supabase isn’t connected yet — fill in config.js with your project URL and anon key.'); return; }
+    if (!CONFIGURED) { onAuthed(DEMO_SESSION); return; }
     if (!email || !password) { setErr('Please provide both email and password.'); return; }
     if (isSignup && password.length < 12) { setErr('Password should be at least 12 characters.'); return; }
     setBusy(true);
@@ -281,6 +295,12 @@ function AuthScreen({ t, dark, onAuthed }) {
           </div>
 
           {notice && <div style={{ marginTop: 16 }}><Banner t={t} kind="success">{notice}</Banner></div>}
+          {!CONFIGURED && (
+            <div style={{ marginTop: 16, display: 'flex', alignItems: 'flex-start', gap: 9, padding: '11px 13px', background: t.accentSoft, border: `1px solid ${t.accentLine}`, borderRadius: 10, fontSize: 12, color: t.textSoft, lineHeight: 1.5 }}>
+              <span style={{ marginTop: 1 }}><Icon name="sparkle" size={13} color={t.accent} /></span>
+              <span>Supabase isn’t connected, so this runs as a local demo — sample data, wallets and filters all work, saved in your browser. Just press the button below.</span>
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 18 }}>
             {isSignup && (
@@ -310,7 +330,7 @@ function AuthScreen({ t, dark, onAuthed }) {
             {err && <Banner t={t} kind="error">{err}</Banner>}
 
             <Button t={t} kind="primary" fullWidth size="lg" icon={isSignup ? 'plus' : 'arrowR'} onClick={submit} disabled={busy}>
-              {busy ? 'Please wait…' : (isSignup ? 'Create my ledger' : 'Sign in to ledger')}
+              {busy ? 'Please wait…' : (!CONFIGURED ? 'Enter demo ledger' : (isSignup ? 'Create my ledger' : 'Sign in to ledger'))}
             </Button>
           </div>
 
@@ -409,86 +429,146 @@ function EmptyHero({ t, dark }) {
   );
 }
 
-// ─── Dashboard ─────────────────────────────────────────────────────────────
-function Dashboard({ t, dark, session, settings, setSettings, onLogout }) {
+// ─── Top-up modal (main account → wallet) ───────────────────────────────────
+function TopUpModal({ t, dark, rows, preselect, onClose, onSubmit, busy }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [wid, setWid] = useState(preselect || WALLETS[0].id);
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(today);
+  const [err, setErr] = useState(null);
+  const wallet = WALLET_BY_ID[wid];
+  const avail = mainBalance(rows).IDR;
+  const amt = Number(String(amount).replace(/[^\d.]/g, '')) || 0;
+  const over = amt > avail;
+
+  const submit = () => {
+    if (amt <= 0) { setErr('Enter an amount to top up.'); return; }
+    setErr(null);
+    onSubmit({ wallet_id: wid, amount: amt, date });
+  };
+
+  return (
+    <div className="ledger-root" style={{ position: 'fixed', inset: 0, zIndex: 60 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: dark ? 'rgba(8,10,14,0.6)' : 'rgba(15,17,22,0.35)', backdropFilter: 'blur(2px)' }} />
+      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 'min(440px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 48px)', overflow: 'auto', background: t.surface, border: `1px solid ${t.borderStrong}`, borderRadius: 16, boxShadow: '0 32px 80px rgba(0,0,0,0.45)', color: t.text }}>
+        <div style={{ padding: '20px 22px', borderBottom: `1px solid ${t.divider}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: t.muted, letterSpacing: 0.08, textTransform: 'uppercase' }}>Top up</span>
+            <h2 style={{ margin: '4px 0 0', fontSize: 19, fontWeight: 600, color: t.text, letterSpacing: -0.3 }}>Move money into a pocket</h2>
+          </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, background: t.inset, border: `1px solid ${t.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: t.muted }}><Icon name="close" size={14} /></button>
+        </div>
+        <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <FieldLabel t={t}>Destination wallet</FieldLabel>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+              {WALLETS.map(w => {
+                const on = w.id === wid;
+                return (
+                  <button key={w.id} onClick={() => setWid(w.id)} title={w.name} style={{ cursor: 'pointer', font: 'inherit', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '10px 4px', borderRadius: 10, background: on ? t.accentSoft : t.inset, border: `1px solid ${on ? t.accentLine : t.border}` }}>
+                    <WalletMark wallet={w} size={30} />
+                    <span style={{ fontSize: 9.5, color: on ? t.text : t.muted, fontWeight: 500 }}>{w.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <FieldLabel t={t} hint={`Available Rp ${fmtMoney(avail, 'IDR').whole}`}>Amount</FieldLabel>
+            <TextInput t={t} value={amount} onChange={setAmount} mono prefix="Rp" placeholder="0" />
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              {[50000, 100000, 200000, 500000].map(q => (
+                <button key={q} onClick={() => setAmount(String(q))} className="ledger-mono" style={{ flex: 1, cursor: 'pointer', font: 'inherit', padding: '6px 4px', borderRadius: 7, background: t.inset, border: `1px solid ${t.border}`, color: t.textSoft, fontSize: 11.5, fontWeight: 500 }}>{q / 1000}k</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <FieldLabel t={t} hint={fmtDate(date)}>Date</FieldLabel>
+            <TextInput t={t} value={date} onChange={setDate} type="date" prefix={<Icon name="cal" size={13} color={t.muted} />} />
+          </div>
+          {over && <Banner t={t} kind="error">That’s more than your main account’s available balance — it’ll dip below zero.</Banner>}
+          {err && <div style={{ fontSize: 12, color: t.expense }}>{err}</div>}
+          {amt > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: t.muted, padding: '10px 12px', background: t.inset, borderRadius: 10, border: `1px solid ${t.border}` }}>
+              <LedgerMark size={16} t={t} /> Main <Icon name="arrowR" size={13} color={t.muted} /> <WalletMark wallet={wallet} size={18} radius={5} /> {wallet.name}
+              <div style={{ flex: 1 }} />
+              <span className="ledger-mono" style={{ color: t.text, fontWeight: 600 }}>Rp {fmtMoney(amt, 'IDR').whole}</span>
+            </div>
+          )}
+          <Button t={t} kind="primary" icon="topup" fullWidth onClick={submit} disabled={busy}>{busy ? 'Topping up…' : `Top up ${wallet.name}`}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Workspace (ledger · pockets · wallet) ──────────────────────────────────
+function Workspace({ t, dark, session, settings, setSettings, onLogout }) {
   const user = session.user;
   const meta = user.user_metadata || {};
   const displayName = meta.display_name || user.email;
   const initials = (meta.display_name || user.email || '?').slice(0, 2).toUpperCase();
 
+  const store = useMemo(() => createStore(db, user.id), [user.id]);
   const [rows, setRows] = useState(null);   // null = loading
   const [loadErr, setLoadErr] = useState(null);
   const [banner, setBanner] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [month, setMonth] = useState(null);
+  const [view, setView] = useState('ledger');     // 'ledger' | 'pockets' | 'wallet'
+  const [walletId, setWalletId] = useState(null);
+  const [topUp, setTopUp] = useState(undefined);  // undefined = closed; null/id = open
 
   const flash = (kind, msg) => { setBanner({ kind, msg }); setTimeout(() => setBanner(null), 3500); };
 
   const load = useCallback(async () => {
-    if (!db) { setRows([]); return; }
     setLoadErr(null);
-    const { data, error } = await db
-      .from('transactions').select('*')
-      .order('date', { ascending: false }).order('id', { ascending: false });
-    if (error) { setLoadErr(error.message); setRows([]); return; }
-    setRows(data || []);
-  }, []);
-
+    try { setRows(await store.list()); }
+    catch (e) { setLoadErr(e.message || String(e)); setRows([]); }
+  }, [store]);
   useEffect(() => { load(); }, [load]);
 
-  // Months present, current selection, and the slice the dashboard shows.
-  const months = useMemo(() => {
-    if (!rows) return [];
-    return [...new Set(rows.map(r => monthKey(r.date)))].sort().reverse();
-  }, [rows]);
-  const curMonth = month || months[0] || monthKey(new Date().toISOString());
-  const monthRows = useMemo(() => (rows || []).filter(r => monthKey(r.date) === curMonth), [rows, curMonth]);
-  const prevMonthKey = months[months.indexOf(curMonth) + 1];
-  const prevRows = useMemo(() => (rows || []).filter(r => monthKey(r.date) === prevMonthKey), [rows, prevMonthKey]);
-
-  const visibleRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return monthRows;
-    return monthRows.filter(r =>
-      (r.vendor_location || '').toLowerCase().includes(q) ||
-      (r.category || '').toLowerCase().includes(q) ||
-      (r.type || '').toLowerCase().includes(q));
-  }, [monthRows, query]);
-
-  // ── CRUD handlers ──
+  // ── CRUD ──
   const addTxn = async (fields) => {
-    if (!db) { flash('error', 'Supabase isn’t connected.'); return; }
     setBusy(true);
-    const { error } = await db.from('transactions').insert({ ...fields, user_id: user.id });
-    setBusy(false);
-    if (error) { flash('error', error.message); return; }
-    flash('success', 'Transaction saved.');
-    setMonth(monthKey(fields.date));
-    load();
+    try {
+      await store.insert(fields);
+      flash('success', fields.wallet_id ? 'Saved to wallet.' : 'Transaction saved.');
+      if (!fields.wallet_id) setMonth(monthKey(fields.date));
+      await load();
+    } catch (e) { flash('error', e.message || String(e)); }
+    finally { setBusy(false); }
   };
-
   const saveTxn = async (fields) => {
     if (!editing) return;
     setBusy(true);
-    const { error } = await db.from('transactions').update(fields).eq('id', editing.id);
-    setBusy(false);
-    if (error) { flash('error', error.message); return; }
-    flash('success', 'Transaction updated.');
-    setEditing(null);
-    load();
+    try { await store.update(editing.id, fields); flash('success', 'Transaction updated.'); setEditing(null); await load(); }
+    catch (e) { flash('error', e.message || String(e)); }
+    finally { setBusy(false); }
   };
-
   const deleteTxn = async () => {
     if (!editing) return;
     setBusy(true);
-    const { error } = await db.from('transactions').delete().eq('id', editing.id);
-    setBusy(false);
-    if (error) { flash('error', error.message); return; }
-    flash('success', 'Transaction deleted.');
-    setEditing(null);
-    load();
+    try { await store.remove(editing.id); flash('success', 'Transaction deleted.'); setEditing(null); await load(); }
+    catch (e) { flash('error', e.message || String(e)); }
+    finally { setBusy(false); }
+  };
+  const doTopUp = async ({ wallet_id, amount, date }) => {
+    const w = WALLET_BY_ID[wallet_id];
+    setBusy(true);
+    try {
+      await store.insert({
+        date, type: 'Transfer', amount, currency: 'IDR', category: 'Transfer', wallet_id,
+        vendor_location: `Top-up → ${w.name}`, has_discount: false, discount_amount: 0,
+        original_amount: amount, is_subscription: false,
+      });
+      flash('success', `Topped up ${w.name}.`);
+      setTopUp(undefined);
+      await load();
+      setView('wallet'); setWalletId(wallet_id);
+    } catch (e) { flash('error', e.message || String(e)); }
+    finally { setBusy(false); }
   };
 
   const exportCSV = () => {
@@ -502,28 +582,74 @@ function Dashboard({ t, dark, session, settings, setSettings, onLogout }) {
   };
 
   const loading = rows === null;
-  const empty = rows && rows.length === 0;
+  const allRows = rows || [];
+
+  // Main-ledger derived slices.
+  const cashRows = mainCashRows(allRows);
+  const months = useMemo(() => [...new Set(cashRows.map(r => monthKey(r.date)))].sort().reverse(), [rows]);
+  const curMonth = month || months[0] || monthKey(new Date().toISOString());
+  const kpiRows = useMemo(() => cashRows.filter(r => monthKey(r.date) === curMonth), [rows, curMonth]);
+  const prevMonthKey = months[months.indexOf(curMonth) + 1];
+  const prevRows = useMemo(() => cashRows.filter(r => monthKey(r.date) === prevMonthKey), [rows, prevMonthKey]);
+  const tableRows = useMemo(() => mainLedgerRows(allRows).filter(r => monthKey(r.date) === curMonth), [rows, curMonth]);
+  const mainEmpty = !loading && mainLedgerRows(allRows).length === 0;
+
+  const inPockets = WALLETS.reduce((s, w) => s + walletBalance(allRows, w.id), 0);
+  const activeWallet = WALLET_BY_ID[walletId];
+  const pocketsActive = view === 'pockets' || view === 'wallet';
+
+  const openWallet = (id) => { setWalletId(id); setView('wallet'); };
+
+  // Top bar varies by view.
+  const topTitle = view === 'pockets' ? 'Pockets'
+    : view === 'wallet' ? (activeWallet ? activeWallet.name : 'Wallet')
+    : (months.length ? monthLabel(curMonth) : 'Your ledger');
+  const topSubtitle = loading ? 'Loading…'
+    : view === 'pockets' ? `${WALLETS.length} wallets · Rp ${fmtMoney(inPockets, 'IDR').whole} across pockets`
+    : view === 'wallet' ? `Wallet ledger · ${displayName}`
+    : `${tableRows.length} entr${tableRows.length === 1 ? 'y' : 'ies'} · ${displayName}`;
 
   return (
     <div className="ledger-root" style={{ width: '100%', minHeight: '100vh', display: 'flex', background: t.bg, color: t.text }}>
       <Sidebar t={t} user={{ name: displayName, email: user.email, initials }} onLogout={onLogout}>
-        <SidebarSection t={t} label="New transaction">
-          <EntryForm t={t} dark={dark} onSubmit={addTxn} busy={busy} />
-        </SidebarSection>
+        {/* Nav */}
+        <div style={{ padding: '14px 16px 6px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <NavItem t={t} icon="list" label="Ledger" active={view === 'ledger'} onClick={() => setView('ledger')} />
+          <NavItem t={t} icon="wallet" label="Pockets" active={pocketsActive} onClick={() => setView('pockets')} badge={WALLETS.length} />
+        </div>
+        <div style={{ height: 1, background: t.divider, margin: '6px 16px' }} />
+
+        {/* Contextual panel */}
+        {view === 'pockets' ? (
+          <SidebarSection t={t} label="Pockets">
+            <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.55, color: t.muted }}>
+              Each wallet draws down as you tap. Top up to move rupiah from your main account into a pocket.
+            </p>
+            <Button t={t} kind="primary" fullWidth icon="topup" onClick={() => setTopUp(null)}>Top up a pocket</Button>
+          </SidebarSection>
+        ) : (
+          <SidebarSection t={t} label={view === 'wallet' && activeWallet ? `Add to ${activeWallet.name}` : 'New transaction'}>
+            {view === 'wallet' && activeWallet && (
+              <div style={{ marginBottom: 12 }}>
+                <Button t={t} kind="secondary" fullWidth icon="topup" onClick={() => setTopUp(walletId)}>Top up {activeWallet.name}</Button>
+              </div>
+            )}
+            <EntryForm t={t} dark={dark} wallet={view === 'wallet' ? walletId : null} onSubmit={addTxn} busy={busy} />
+          </SidebarSection>
+        )}
       </Sidebar>
 
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <TopBar t={t} title={months.length ? monthLabel(curMonth) : 'Your ledger'}
-          subtitle={loading ? 'Loading…' : `${monthRows.length} transaction${monthRows.length === 1 ? '' : 's'} · ${displayName}`}
+        <TopBar t={t} title={topTitle} subtitle={topSubtitle}
           right={
             <>
-              {months.length > 1 && (
+              {view === 'ledger' && months.length > 1 && (
                 <div style={{ width: 150 }}>
                   <Select t={t} value={curMonth} onChange={setMonth}
                     options={months.map(m => ({ value: m, label: monthLabel(m) }))} />
                 </div>
               )}
-              <Button t={t} kind="secondary" icon="download" size="sm" onClick={exportCSV} disabled={empty}>Export CSV</Button>
+              <Button t={t} kind="secondary" icon="download" size="sm" onClick={exportCSV} disabled={loading || !allRows.length}>Export CSV</Button>
               <SettingsMenu t={t} dark={dark} settings={settings} setSettings={setSettings} />
             </>
           } />
@@ -531,11 +657,25 @@ function Dashboard({ t, dark, session, settings, setSettings, onLogout }) {
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 32px 28px' }}>
           {banner && <Banner t={t} kind={banner.kind} onClose={() => setBanner(null)}>{banner.msg}</Banner>}
           {loadErr && <Banner t={t} kind="error">{loadErr}</Banner>}
-          {!CONFIGURED && <Banner t={t} kind="error">Demo mode — connect Supabase in config.js to load and save real data.</Banner>}
+          {store.demo && !loadErr && (
+            <div style={{ fontSize: 11.5, color: t.muted, display: 'flex', alignItems: 'center', gap: 7 }}>
+              <Icon name="info" size={12} color={t.muted} /> Demo mode · saved in this browser. Connect Supabase in <span className="ledger-mono" style={{ color: t.textSoft }}>config.js</span> to go live.
+            </div>
+          )}
 
           {loading ? (
             <div style={{ padding: 60, textAlign: 'center', color: t.muted }}>Loading your ledger…</div>
-          ) : empty ? (
+          ) : view === 'pockets' ? (
+            <PocketsScreen t={t} dark={dark} rows={allRows} onOpen={openWallet} onTopUp={(id) => setTopUp(id)} />
+          ) : view === 'wallet' && activeWallet ? (
+            <>
+              <button onClick={() => setView('pockets')} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: t.muted, fontSize: 12.5, fontWeight: 500, padding: 0, font: 'inherit' }}>
+                <Icon name="arrowL" size={14} color={t.muted} /> All pockets
+              </button>
+              <WalletDetailView t={t} dark={dark} wallet={activeWallet} rows={allRows} density={settings.density}
+                onRowClick={setEditing} onExport={exportCSV} onTopUp={(id) => setTopUp(id)} />
+            </>
+          ) : mainEmpty ? (
             <EmptyHero t={t} dark={dark} />
           ) : (
             <>
@@ -544,17 +684,16 @@ function Dashboard({ t, dark, session, settings, setSettings, onLogout }) {
                 <Segment t={t} value={settings.ccyMode} onChange={v => setSettings(s => ({ ...s, ccyMode: v }))}
                   options={[{ value: 'both', label: 'Both' }, { value: 'usd', label: 'USD' }, { value: 'idr', label: 'IDR' }]} />
               </div>
-              <KPIRow t={t} dark={dark} rows={monthRows} prev={aggregateRows(prevRows)} ccyMode={settings.ccyMode} />
+              <KPIRow t={t} dark={dark} rows={kpiRows} prev={aggregateRows(prevRows)} ccyMode={settings.ccyMode} />
               <div>
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '6px 2px 12px' }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: t.text }}>Insights</span>
                   <span style={{ fontSize: 11.5, color: t.muted }}>{monthLabel(curMonth)}{prevMonthKey ? ` · vs ${monthLabel(prevMonthKey)}` : ''}</span>
                 </div>
-                <InsightsBand t={t} dark={dark} rows={monthRows} ccyMode={settings.ccyMode} />
+                <InsightsBand t={t} dark={dark} rows={kpiRows} ccyMode={settings.ccyMode} />
               </div>
-              <TransactionTable t={t} dark={dark} rows={visibleRows} density={settings.density}
-                query={query} onQueryChange={setQuery} onExport={exportCSV}
-                onRowClick={setEditing} total={monthRows.length} />
+              <FilteredTable t={t} dark={dark} rows={tableRows} context="main" density={settings.density}
+                ccyMode={settings.ccyMode} onRowClick={setEditing} onExport={exportCSV} />
             </>
           )}
         </div>
@@ -563,6 +702,10 @@ function Dashboard({ t, dark, session, settings, setSettings, onLogout }) {
       {editing && (
         <EditModal t={t} dark={dark} row={editing} busy={busy}
           onClose={() => setEditing(null)} onSave={saveTxn} onDelete={deleteTxn} />
+      )}
+      {topUp !== undefined && (
+        <TopUpModal t={t} dark={dark} rows={allRows} preselect={topUp} busy={busy}
+          onClose={() => setTopUp(undefined)} onSubmit={doTopUp} />
       )}
     </div>
   );
@@ -608,7 +751,7 @@ function App() {
   }
 
   return session
-    ? <Dashboard t={t} dark={settings.dark} session={session} settings={settings} setSettings={setSettings} onLogout={logout} />
+    ? <Workspace t={t} dark={settings.dark} session={session} settings={settings} setSettings={setSettings} onLogout={logout} />
     : <AuthScreen t={t} dark={settings.dark} onAuthed={setSession} />;
 }
 

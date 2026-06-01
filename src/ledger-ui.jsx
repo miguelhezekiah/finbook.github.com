@@ -40,6 +40,14 @@ const Icon = ({ name, size = 16, color = 'currentColor', strokeWidth = 1.6 }) =>
     eye:     'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
     eyeoff:  'M3 3l18 18M10.5 5.2A10 10 0 0 1 22 12s-1 2-3 4M6 6.5C3.5 8.4 2 12 2 12s3.5 7 10 7c1.7 0 3.2-.5 4.5-1.2M9.5 9.5A3 3 0 0 0 14.5 14.5',
     chip:    'M9 4v3m6-3v3M9 17v3m6-3v3M4 9h3m-3 6h3m10-6h3m-3 6h3M6 6h12v12H6z',
+    topup:   'M12 20V9M7.5 13.5 12 9l4.5 4.5M5 5h14',
+    caretUp: 'M6 15l6-6 6 6',
+    caretDn: 'M6 9l6 6 6-6',
+    arrowL:  'M19 12H5M11 18l-6-6 6-6',
+    swap:    'M4 9h13l-3.5-3.5M20 15H7l3.5 3.5',
+    wallet:  'M3 8h18v11H3zM3 8l2.2-4h12L20 8M16.5 13.5h2.5',
+    grid:    'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+    list:    'M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01',
   }[name];
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -96,6 +104,20 @@ function CategoryChip({ category, t, dark, size = 'md' }) {
 
 // ─── Type/Direction pill (Income/Expense) ─────────────────────────────────
 function DirectionTag({ type, t }) {
+  if (type === 'Transfer') {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 5,
+        padding: '2px 7px 2px 5px', borderRadius: 5,
+        background: t.chipBg, color: t.info,
+        fontSize: 11, fontWeight: 600, letterSpacing: 0.02,
+        lineHeight: 1, textTransform: 'uppercase',
+      }}>
+        <Icon name="swap" size={11} color={t.info} strokeWidth={2.2} />
+        Top-up
+      </span>
+    );
+  }
   const isIncome = type === 'Income';
   const fg = isIncome ? t.income : t.expense;
   const bg = isIncome ? t.incomeSoft : t.expenseSoft;
@@ -110,6 +132,31 @@ function DirectionTag({ type, t }) {
       <Icon name={isIncome ? 'arrowDn' : 'arrowUp'} size={11} color={fg} strokeWidth={2.2} />
       {type}
     </span>
+  );
+}
+
+// ─── Sidebar nav item ──────────────────────────────────────────────────────
+function NavItem({ t, icon, label, active, onClick, badge }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+      padding: '9px 11px', borderRadius: 9, cursor: 'pointer', font: 'inherit',
+      background: active ? t.elevated : 'transparent',
+      border: `1px solid ${active ? t.border : 'transparent'}`,
+      color: active ? t.text : t.muted, textAlign: 'left',
+      transition: 'background .12s, color .12s',
+    }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.color = t.textSoft; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.color = t.muted; }}>
+      <Icon name={icon} size={16} color={active ? t.accent : 'currentColor'} strokeWidth={1.8} />
+      <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{label}</span>
+      {badge != null && (
+        <span className="ledger-mono" style={{
+          fontSize: 11, fontWeight: 600, color: active ? t.text : t.muted,
+          padding: '1px 7px', borderRadius: 999, background: t.chipBg, border: `0.5px solid ${t.chipLine}`,
+        }}>{badge}</span>
+      )}
+    </button>
   );
 }
 
@@ -348,6 +395,6 @@ function TopBar({ t, title, subtitle, right }) {
 
 Object.assign(window, {
   LedgerMark, Icon, CATEGORY_PALETTE, categoryColor, CategoryChip,
-  DirectionTag, Sidebar, SidebarSection, FieldLabel, TextInput, Select,
+  DirectionTag, NavItem, Sidebar, SidebarSection, FieldLabel, TextInput, Select,
   Segment, Checkbox, Button, TopBar,
 });
